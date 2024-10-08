@@ -5,6 +5,8 @@ from datetime import *
 import urllib.request
 from argparse import ArgumentParser, RawTextHelpFormatter, ArgumentTypeError
 from enums import *
+import zipfile
+import gzip
 
 def get_destination_dir(file_url, folder=None):
   store_directory = os.environ.get('STORE_DIRECTORY')
@@ -40,6 +42,12 @@ def download_file(base_path, file_name, date_range=None, folder=None):
     print("\nfile already exists! {}".format(save_path))
     return
   
+  # Check if the corresponding .csv.gz file exists (even if the .zip file is not present)
+  gz_file_path = save_path.replace('.zip', '.csv.gz')
+  if os.path.exists(gz_file_path):
+      print("\nFile already exists as a .csv.gz file! {}".format(gz_file_path))
+      return
+  
   # make the directory
   if not os.path.exists(base_path):
     Path(get_destination_dir(base_path)).mkdir(parents=True, exist_ok=True)
@@ -62,8 +70,12 @@ def download_file(base_path, file_name, date_range=None, folder=None):
         dl_progress += len(buf)
         out_file.write(buf)
         done = int(50 * dl_progress / length)
-        sys.stdout.write("\r[%s%s]" % ('#' * done, '.' * (50-done)) )    
-        sys.stdout.flush()
+        #sys.stdout.write("\r[%s%s]" % ('#' * done, '.' * (50-done)) )    
+        #sys.stdout.flush()
+        
+    # Check if the downloaded file is a ZIP file
+    if file_name.endswith('.zip'):
+        unzip_and_convert(save_path, base_path)
 
   except urllib.error.HTTPError:
     print("\nFile not found: {}".format(download_url))
@@ -111,6 +123,36 @@ def get_path(trading_type, market_data_type, time_period, symbol, interval=None)
   else:
     path = f'{trading_type_path}/{time_period}/{market_data_type}/{symbol.upper()}/'
   return path
+
+def unzip_and_convert(zip_file_path, extract_to_folder):
+    """
+    Handles the unzipping of the file, conversion of CSV to GZ, and cleanup of files.
+    """
+    try:
+        # Unzip the file and process each file within the zip directly
+        with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+            for member in zip_ref.namelist():
+                # Process only CSV files
+                if member.endswith('.csv'):
+                    # Extract the file into memory, no need to write the CSV to disk
+                    with zip_ref.open(member) as extracted_csv:
+                        # Define the path for the .gz file
+                        csv_name = os.path.basename(member)
+                        gz_path = os.path.join(extract_to_folder, f"{csv_name}.gz")
+
+                        # Convert CSV to GZ directly from memory
+                        with gzip.open(gz_path, 'wb') as gz_file:
+                            shutil.copyfileobj(extracted_csv, gz_file)
+
+                    print(f"Converted {member} to {gz_path} and removed the original CSV in memory.")
+
+        # Once conversion is done, remove the original ZIP file
+        os.remove(zip_file_path)
+        print(f"Removed original ZIP file: {zip_file_path}")
+
+    except Exception as e:
+        print(f"Error processing file {zip_file_path}: {e}")
+        raise
 
 def get_parser(parser_type):
   parser = ArgumentParser(description=("This is a script to download historical {} data").format(parser_type), formatter_class=RawTextHelpFormatter)
