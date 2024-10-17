@@ -217,7 +217,7 @@ def unzip_and_convert(zip_file_path, extract_to_folder):
         # Try to remove the CHECKSUM file and handle any errors
         try:
             os.remove(zip_file_path + '.CHECKSUM')
-            print(f"Removed original CHECKSUM file: {zip_file_path}")
+            print(f"Removed original CHECKSUM file: {zip_file_path + '.CHECKSUM'}")
         except FileNotFoundError:
             print(f"CHECKSUM file not found: {zip_file_path + '.CHECKSUM'}")
         except Exception as e:
