@@ -7,7 +7,7 @@ from argparse import ArgumentParser, RawTextHelpFormatter, ArgumentTypeError
 from enums import *
 import zipfile
 import gzip
-import hashlib  # Import hashlib for checksum calculation
+import hashlib
 
 def get_destination_dir(file_url, folder=None):
   store_directory = os.environ.get('STORE_DIRECTORY')
@@ -29,121 +29,59 @@ def get_all_symbols(type):
     response = urllib.request.urlopen("https://api.binance.com/api/v3/exchangeInfo").read()
   return list(map(lambda symbol: symbol['symbol'], json.loads(response)['symbols']))
 
-def download_from_url(download_url, save_path):
+
+def download_file(base_path, file_name, date_range=None, folder=None):
+  download_path = "{}{}".format(base_path, file_name)
+  if folder:
+    base_path = os.path.join(folder, base_path)
+  if date_range:
+    date_range = date_range.replace(" ","_")
+    base_path = os.path.join(base_path, date_range)
+  save_path = get_destination_dir(os.path.join(base_path, file_name), folder)
+  
+
+  if os.path.exists(save_path):
+    print("\nfile already exists! {}".format(save_path))
+    return
+  
+  # Check if the corresponding .csv.gz file exists (even if the .zip file is not present)
+  gz_file_path = save_path.replace('.zip', '.csv.gz')
+  if os.path.exists(gz_file_path):
+      print("\nFile already exists as a .csv.gz file! {}".format(gz_file_path))
+      return
+  
+  # make the directory
+  if not os.path.exists(base_path):
+    Path(get_destination_dir(base_path)).mkdir(parents=True, exist_ok=True)
+
+  try:
+    download_url = get_download_url(download_path)
     dl_file = urllib.request.urlopen(download_url)
     length = dl_file.getheader('content-length')
     if length:
-        length = int(length)
-        blocksize = max(4096,length//100)
-    else:
-        blocksize = 4096
+      length = int(length)
+      blocksize = max(4096,length//100)
 
     with open(save_path, 'wb') as out_file:
-        dl_progress = 0
-        print("\nFile Download: {}".format(save_path))
-        while True:
-            buf = dl_file.read(blocksize)   
-            if not buf:
-                break
-            dl_progress += len(buf)
-            out_file.write(buf)
-            done = int(50 * dl_progress / length) if length else 0
-            # Optionally, you can display progress here
-    return
+      dl_progress = 0
+      print("\nFile Download: {}".format(save_path))
+      while True:
+        buf = dl_file.read(blocksize)   
+        if not buf:
+          break
+        dl_progress += len(buf)
+        out_file.write(buf)
+        done = int(50 * dl_progress / length)
+        #sys.stdout.write("\r[%s%s]" % ('#' * done, '.' * (50-done)) )    
+        #sys.stdout.flush()
 
-def validate_checksum(zip_file_path, checksum_file_path):
-    """
-    Validates the checksum of the zip file against the checksum in the CHECKSUM file.
-    """
-    # Read the expected checksum from the checksum file
-    try:
-        with open(checksum_file_path, 'r') as f:
-            checksum_line = f.readline()
-            # The checksum file contains lines like:
-            # <checksum>  <filename>
-            # We need to extract the checksum
-            expected_checksum = checksum_line.split()[0]
-    except Exception as e:
-        print(f"Error reading checksum file {checksum_file_path}: {e}")
-        return False
+    # Check if the downloaded file is a ZIP file
+    if file_name.endswith('.zip'):
+        unzip_and_convert(save_path, base_path)      
 
-    # Calculate the actual checksum of the zip file
-    sha256_hash = hashlib.sha256()
-    try:
-        with open(zip_file_path, "rb") as f:
-            # Read and update hash in chunks of 4K
-            for byte_block in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(byte_block)
-        actual_checksum = sha256_hash.hexdigest()
-    except Exception as e:
-        print(f"Error calculating checksum for {zip_file_path}: {e}")
-        return False
-
-    # Compare the checksums
-    if expected_checksum == actual_checksum:
-        print(f"Checksum validated for {zip_file_path}")
-        return True
-    else:
-        print(f"Checksum mismatch for {zip_file_path}")
-        print(f"Expected: {expected_checksum}")
-        print(f"Actual:   {actual_checksum}")
-        return False
-
-def download_file(base_path, file_name, date_range=None, folder=None):
-    download_path = "{}{}".format(base_path, file_name)
-    if folder:
-        base_path = os.path.join(folder, base_path)
-    if date_range:
-        date_range = date_range.replace(" ","_")
-        base_path = os.path.join(base_path, date_range)
-    save_path = get_destination_dir(os.path.join(base_path, file_name), folder)
-    
-    if os.path.exists(save_path):
-        print("\nfile already exists! {}".format(save_path))
-        return
-    
-    # Check if the corresponding .csv.gz file exists (even if the .zip file is not present)
-    gz_file_path = save_path.replace('.zip', '.csv.gz')
-    if os.path.exists(gz_file_path):
-        print("\nFile already exists as a .csv.gz file! {}".format(gz_file_path))
-        return
-    
-    # make the directory
-    if not os.path.exists(base_path):
-        Path(get_destination_dir(base_path)).mkdir(parents=True, exist_ok=True)
-
-    try:
-        download_url = get_download_url(download_path)
-        # Download the zip file
-        download_from_url(download_url, save_path)
-        
-        # Check if the corresponding .CHECKSUM file exists
-        #checksum_file_path = save_path + '.CHECKSUM'
-        checksum_file_path = save_path.replace('.CHECKSUM', '') + '.CHECKSUM'
-        if os.path.exists(checksum_file_path):
-            # Perform checksum validation
-            checksum_valid = validate_checksum(save_path.replace('.CHECKSUM', ''), checksum_file_path)
-            attempts = 0
-            max_attempts = 3
-            while not checksum_valid and attempts < max_attempts:
-                print("Checksum validation failed for {}. Re-downloading...".format(save_path))
-                # Delete the zip file
-                os.remove(save_path)
-                # Re-download the zip file
-                download_from_url(download_url, save_path)
-                # Re-validate checksum
-                checksum_valid = validate_checksum(save_path, checksum_file_path)
-                attempts += 1
-            if checksum_valid:
-                # Proceed to unzip_and_convert
-                unzip_and_convert(save_path.replace('.CHECKSUM', ''), base_path)
-            else:
-                print("Failed to validate checksum after {} attempts. Skipping file: {}".format(max_attempts, save_path))
-        else:
-            print("Checksum file not found for {}. Skipping unzip and convert.".format(save_path))
-    except urllib.error.HTTPError:
-        print("\nFile not found: {}".format(download_url))
-        pass
+  except urllib.error.HTTPError:
+    print("\nFile not found: {}".format(download_url))
+    pass
 
 def convert_to_date_object(d):
   year, month, day = [int(x) for x in d.split('-')]
@@ -210,18 +148,9 @@ def unzip_and_convert(zip_file_path, extract_to_folder):
 
                     print(f"Converted {member} to {gz_path} and removed the original CSV in memory.")
 
-        # Once conversion is done, remove the original ZIP file and Checksum
-        os.remove(zip_file_path)
-        print(f"Removed original ZIP file: {zip_file_path}")
-        
-        # Try to remove the CHECKSUM file and handle any errors
-        try:
-            os.remove(zip_file_path + '.CHECKSUM')
-            print(f"Removed original CHECKSUM file: {zip_file_path}")
-        except FileNotFoundError:
-            print(f"CHECKSUM file not found: {zip_file_path + '.CHECKSUM'}")
-        except Exception as e:
-            print(f"An error occurred while removing CHECKSUM file: {e}")
+        # Once conversion is done, remove the original ZIP file
+        #os.remove(zip_file_path)
+        #print(f"Removed original ZIP file: {zip_file_path}")
 
     except Exception as e:
         print(f"Error processing file {zip_file_path}: {e}")
@@ -270,3 +199,5 @@ def get_parser(parser_type):
 
 
   return parser
+
+
